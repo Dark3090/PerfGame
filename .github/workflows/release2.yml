@@ -7,7 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
 
     steps:
@@ -17,10 +16,22 @@ jobs:
           fetch-depth: 0
 
       - name: Build WebUI
-        working-directory: ./webui
         run: |
           npm install
           npm run build
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r25b
+
+      - name: Build perfutils
+        run: |
+          ndk-build \
+            NDK_PROJECT_PATH=. \
+            APP_BUILD_SCRIPT=./jni/Android.mk \
+            NDK_APPLICATION_MK=./jni/Application.mk \
+            V=1
 
       - name: Apply custom games
         run: |
@@ -32,16 +43,10 @@ jobs:
           gamelist = module_dir / "webroot" / "gamelist.txt"
           service = module_dir / "service.sh"
           custom_script = module_dir / "custom-games.sh"
+          custom_file = root / "custom-games.txt"
 
-          candidates = [
-              root / "custom-games.txt",
-              module_dir / "custom-games.txt",
-          ]
-          custom_file = next((p for p in candidates if p.exists()), None)
-
-          if custom_file is None:
-              print("custom-games.txt not found; skipping custom game injection")
-              raise SystemExit(0)
+          if not custom_file.exists():
+              raise SystemExit("custom-games.txt not found in repo root")
 
           games = []
           for raw in custom_file.read_text(encoding="utf-8").splitlines():
@@ -50,26 +55,15 @@ jobs:
                   continue
               parts = [p.strip() for p in line.split("|")]
               if len(parts) != 3:
-                  raise SystemExit(f"Invalid line in {custom_file}: {raw}")
+                  raise SystemExit(f"Invalid line in custom-games.txt: {raw}")
               pkg, fps, scale = parts
-              try:
-                  fps_int = int(fps)
-                  scale_float = float(scale)
-              except ValueError:
-                  raise SystemExit(f"Invalid FPS or scale in line: {raw}")
-              games.append((pkg, fps_int, scale_float))
-
-          if not games:
-              print("No valid games found; skipping custom game injection")
-              raise SystemExit(0)
+              games.append((pkg, int(fps), float(scale)))
 
           gamelist.parent.mkdir(parents=True, exist_ok=True)
           current = gamelist.read_text(encoding="utf-8").splitlines() if gamelist.exists() else []
-
           for pkg, _, _ in games:
               if pkg not in current:
                   current.append(pkg)
-
           gamelist.write_text("\n".join(current).strip() + "\n", encoding="utf-8")
 
           script_lines = ["#!/system/bin/sh", ""]
@@ -80,24 +74,19 @@ jobs:
           custom_script.write_text("\n".join(script_lines) + "\n", encoding="utf-8")
 
           text = service.read_text(encoding="utf-8")
-          marker = "sleep 10\nperfutils\n"
-          inject = "sleep 10\n[ -f \"$MODPATH/custom-games.sh\" ] && sh \"$MODPATH/custom-games.sh\"\nperfutils\n"
+          inject = 'sleep 10\n[ -f "$MODPATH/custom-games.sh" ] && sh "$MODPATH/custom-games.sh"\nperfutils\n'
+          marker = 'sleep 10\nperfutils\n'
           if marker in text:
               text = text.replace(marker, inject, 1)
           elif 'custom-games.sh' not in text:
-              text = text.replace("sleep 10\nperfutils", inject.strip(), 1)
-
+              text = text.replace('sleep 10\nperfutils', inject.strip(), 1)
           service.write_text(text, encoding="utf-8")
           PY
 
-      - name: Download Executable Daemon
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          name: perfutils
-          path: module/libs/
-          workflow: build.yml
-          branch: main
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy libs into module
+        run: |
+          mkdir -p module/libs
+          cp -r libs/* module/libs/
 
       - name: Parse module.prop
         id: module_prop
@@ -106,7 +95,7 @@ jobs:
           VERSION=$(grep '^version=' module/module.prop | cut -d'=' -f2)
           echo "MODULE_NAME=${NAME}${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare Module Structure
+      - name: Prepare package
         run: |
           mkdir -p "${{ steps.module_prop.outputs.MODULE_NAME }}"
           cp -r module/* "${{ steps.module_prop.outputs.MODULE_NAME }}/"
@@ -114,7 +103,7 @@ jobs:
           rm -f "${{ steps.module_prop.outputs.MODULE_NAME }}/webroot/"*.map
           rm -f "${{ steps.module_prop.outputs.MODULE_NAME }}/mode.conf"
 
-      - name: Upload Release
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.module_prop.outputs.MODULE_NAME }}
