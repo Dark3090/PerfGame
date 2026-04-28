@@ -17,6 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build WebUI
+        working-directory: ./webui
         run: |
           npm install
           npm run build
@@ -27,14 +28,20 @@ jobs:
           from pathlib import Path
 
           root = Path(".")
-          custom_file = root / "custom-games.txt"
           module_dir = root / "module"
           gamelist = module_dir / "webroot" / "gamelist.txt"
           service = module_dir / "service.sh"
           custom_script = module_dir / "custom-games.sh"
 
-          if not custom_file.exists():
-              raise SystemExit("custom-games.txt not found")
+          candidates = [
+              root / "custom-games.txt",
+              module_dir / "custom-games.txt",
+          ]
+          custom_file = next((p for p in candidates if p.exists()), None)
+
+          if custom_file is None:
+              print("custom-games.txt not found; skipping custom game injection")
+              raise SystemExit(0)
 
           games = []
           for raw in custom_file.read_text(encoding="utf-8").splitlines():
@@ -43,7 +50,7 @@ jobs:
                   continue
               parts = [p.strip() for p in line.split("|")]
               if len(parts) != 3:
-                  raise SystemExit(f"Invalid line in custom-games.txt: {raw}")
+                  raise SystemExit(f"Invalid line in {custom_file}: {raw}")
               pkg, fps, scale = parts
               try:
                   fps_int = int(fps)
@@ -53,7 +60,8 @@ jobs:
               games.append((pkg, fps_int, scale_float))
 
           if not games:
-              raise SystemExit("No valid games found in custom-games.txt")
+              print("No valid games found; skipping custom game injection")
+              raise SystemExit(0)
 
           gamelist.parent.mkdir(parents=True, exist_ok=True)
           current = gamelist.read_text(encoding="utf-8").splitlines() if gamelist.exists() else []
