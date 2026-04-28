@@ -1,58 +1,63 @@
-name: Add custom games to PerfGame
+name: Build PerfGame Custom
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-gamelist:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Add games to gamelist
+      - name: Add custom games to gamelist
         run: |
-          python3 - <<'PY'
+          python3 << 'EOF'
           from pathlib import Path
 
-          path = Path("module/webroot/gamelist.txt")
-          path.parent.mkdir(parents=True, exist_ok=True)
+          gamelist = Path("module/webroot/gamelist.txt")
+          gamelist.parent.mkdir(parents=True, exist_ok=True)
 
-          current = []
-          if path.exists():
-              current = [
-                  line.strip()
-                  for line in path.read_text(encoding="utf-8").splitlines()
-                  if line.strip()
-              ]
+          existing = []
+          if gamelist.exists():
+              existing = [x.strip() for x in gamelist.read_text(encoding="utf-8").splitlines() if x.strip()]
 
-          add = [
+          custom_games = [
               "com.roblox.client",
-              "org.levimc.launcher",
+              "org.levimc.launcher"
           ]
 
-          for pkg in add:
-              if pkg not in current:
-                  current.append(pkg)
+          for game in custom_games:
+              if game not in existing:
+                  existing.append(game)
 
-          path.write_text("\n".join(current) + "\n", encoding="utf-8")
-          PY
+          gamelist.write_text("\n".join(existing) + "\n", encoding="utf-8")
+          print("Updated gamelist.txt")
+          EOF
 
-      - name: Commit changes
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build WebUI
         run: |
-          if git diff --quiet; then
-            echo "No changes"
-            exit 0
-          fi
+          npm install
+          npm run build
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add module/webroot/gamelist.txt
-          git commit -m "Add custom games to gamelist"
-          git push
+      - name: Package module
+        run: |
+          mkdir -p output
+          cp -r module output/PerfGame
+          cd output
+          zip -r PerfGame-Custom.zip PerfGame
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PerfGame-Custom
+          path: output/PerfGame-Custom.zip
