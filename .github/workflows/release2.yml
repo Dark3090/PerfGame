@@ -1,4 +1,4 @@
-name: Build PerfGame Custom
+name: Build PerfGame KernelSU Ready
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Add custom games to gamelist
+      - name: Add custom games
         run: |
           python3 << 'EOF'
           from pathlib import Path
@@ -22,21 +22,25 @@ jobs:
           gamelist = Path("module/webroot/gamelist.txt")
           gamelist.parent.mkdir(parents=True, exist_ok=True)
 
-          existing = []
-          if gamelist.exists():
-              existing = [x.strip() for x in gamelist.read_text(encoding="utf-8").splitlines() if x.strip()]
-
-          custom_games = [
+          games = [
               "com.roblox.client",
               "org.levimc.launcher"
           ]
 
-          for game in custom_games:
-              if game not in existing:
-                  existing.append(game)
+          current = []
+          if gamelist.exists():
+              current = [
+                  x.strip()
+                  for x in gamelist.read_text(encoding="utf-8").splitlines()
+                  if x.strip()
+              ]
 
-          gamelist.write_text("\n".join(existing) + "\n", encoding="utf-8")
-          print("Updated gamelist.txt")
+          for game in games:
+              if game not in current:
+                  current.append(game)
+
+          gamelist.write_text("\n".join(current) + "\n", encoding="utf-8")
+          print("Games added successfully")
           EOF
 
       - name: Setup Node.js
@@ -49,15 +53,33 @@ jobs:
           npm install
           npm run build
 
+      - name: Ensure libs folder exists
+        run: |
+          mkdir -p module/libs
+
+          if [ -d libs ]; then
+            cp -r libs/* module/libs/
+          fi
+
+          if [ -f perfutils.zip ]; then
+            unzip -o perfutils.zip -d module/libs/
+          fi
+
+      - name: Verify files
+        run: |
+          echo "Checking perfutils binaries..."
+          find module/libs -type f -name perfutils || true
+
       - name: Package module
         run: |
-          mkdir -p output
-          cp -r module output/PerfGame
-          cd output
-          zip -r PerfGame-Custom.zip PerfGame
+          mkdir -p output/PerfGame
+          cp -r module/* output/PerfGame/
 
-      - name: Upload ZIP artifact
+          cd output
+          zip -r PerfGame-Custom-KernelSU.zip PerfGame
+
+      - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: PerfGame-Custom
-          path: output/PerfGame-Custom.zip
+          name: PerfGame-Custom-KernelSU
+          path: output/PerfGame-Custom-KernelSU.zip
